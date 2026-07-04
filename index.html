@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Med-Learn</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <a href="index.html" class="logo">Med<span>Learn</span></a>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <div class="lang-toggle">
+        <button class="lang-btn" data-lang="en">EN</button>
+        <button class="lang-btn" data-lang="sw">SW</button>
+      </div>
+      <div id="user-btn"></div>
+    </div>
+  </div>
+</header>
+
+<!-- Auth overlay -->
+<div id="auth-overlay" class="auth-overlay" style="display:none">
+  <div class="auth-box">
+    <div style="font-size:40px; margin-bottom:0.5rem;">🎓</div>
+    <h2 id="login-title">Sign in to continue</h2>
+    <p id="login-desc">Access all courses and track your progress.</p>
+    <button class="btn btn-primary btn-full" onclick="Auth.signInGoogle()">
+      Continue with Google
+    </button>
+  </div>
+</div>
+
+<main class="container">
+
+  <!-- Page title -->
+  <div style="margin-bottom:1.25rem;">
+    <h1 id="page-title" style="font-size:22px; font-weight:600;">Courses</h1>
+    <p id="page-subtitle" style="color:var(--text-muted); font-size:14px; margin-top:4px;">
+      Select a course to start learning
+    </p>
+  </div>
+
+  <!-- Category filter -->
+  <div id="category-filter" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:1.25rem;"></div>
+
+  <!-- Course grid -->
+  <div id="course-grid" class="course-grid" style="display:flex; flex-direction:column; gap:1rem;">
+    <div class="spinner"></div>
+  </div>
+
+</main>
+
+<!-- Scripts -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/lang.js"></script>
+<script src="js/auth.js"></script>
+<script>
+
+const I18N = {
+  en: {
+    page_title: 'Courses',
+    page_subtitle: 'Select a course to start learning',
+    login_title: 'Sign in to continue',
+    login_desc: 'Access all courses and track your progress.',
+    all: 'All',
+    lessons: 'lessons',
+    start: 'Start',
+    continue: 'Continue',
+    completed: 'Completed',
+    your_progress: 'Your progress',
+    sign_out: 'Sign out',
+  },
+  sw: {
+    page_title: 'Kozi',
+    page_subtitle: 'Chagua kozi kuanza kujifunza',
+    login_title: 'Ingia kuendelea',
+    login_desc: 'Fikia kozi zote na ufuatilie maendeleo yako.',
+    all: 'Zote',
+    lessons: 'masomo',
+    start: 'Anza',
+    continue: 'Endelea',
+    completed: 'Imekamilika',
+    your_progress: 'Maendeleo yako',
+    sign_out: 'Toka',
+  }
+};
+
+function t(key) { return I18N[Lang.current][key] || key; }
+
+// Translate static elements
+function applyLang() {
+  document.getElementById('page-title').textContent = t('page_title');
+  document.getElementById('page-subtitle').textContent = t('page_subtitle');
+  document.getElementById('login-title').textContent = t('login_title');
+  document.getElementById('login-desc').textContent = t('login_desc');
+  // Re-render cards to flip text
+  if (allCourses.length) renderCourses(allCourses);
+}
+
+let allCourses = [];
+let userProgress = {};
+let activeCategory = 'all';
+
+async function loadCourses() {
+  const { data, error } = await sb
+    .from('courses')
+    .select('*')
+    .eq('published', true)
+    .order('created_at');
+
+  if (error || !data) {
+    document.getElementById('course-grid').innerHTML =
+      '<div class="empty-state"><p>Could not load courses.</p></div>';
+    return;
+  }
+
+  allCourses = data;
+  renderCategories(data);
+  renderCourses(data);
+
+  if (Auth.isLoggedIn()) await loadProgress();
+}
+
+async function loadProgress() {
+  const { data } = await sb
+    .from('user_progress')
+    .select('course_id, completed_lessons, total_score, max_score')
+    .eq('user_id', Auth.user.id);
+
+  if (data) {
+    data.forEach(p => { userProgress[p.course_id] = p; });
+    renderCourses(allCourses); // re-render with progress
+  }
+}
+
+function renderCategories(courses) {
+  const cats = ['all', ...new Set(courses.map(c => c.category).filter(Boolean))];
+  const wrap = document.getElementById('category-filter');
+  wrap.innerHTML = cats.map(cat => `
+    <button class="badge ${cat === activeCategory ? 'badge-brown' : 'badge-gray'}"
+      style="cursor:pointer; padding:6px 14px; font-size:13px;"
+      onclick="filterCategory('${cat}')">
+      ${cat === 'all' ? t('all') : cat}
+    </button>
+  `).join('');
+}
+
+function filterCategory(cat) {
+  activeCategory = cat;
+  renderCategories(allCourses);
+  const filtered = cat === 'all' ? allCourses : allCourses.filter(c => c.category === cat);
+  renderCourses(filtered);
+}
+
+function renderCourses(courses) {
+  const grid = document.getElementById('course-grid');
+  if (!courses.length) {
+    grid.innerHTML = '<div class="empty-state"><p>No courses found.</p></div>';
+    return;
+  }
+
+  grid.innerHTML = courses.map(course => {
+    const prog = userProgress[course.id];
+    const pct = prog
+      ? Math.round((prog.completed_lessons / course.lesson_count) * 100)
+      : 0;
+    const btnLabel = !Auth.isLoggedIn()
+      ? t('start')
+      : prog?.completed_lessons >= course.lesson_count
+        ? t('completed')
+        : prog?.completed_lessons > 0
+          ? t('continue')
+          : t('start');
+
+    const scoreHtml = prog && prog.max_score > 0
+      ? `<div class="score-line" style="margin-top:6px;">
+           <span>${t('your_progress')}:</span>
+           <span class="score-value">${prog.total_score}/${prog.max_score}</span>
+           <span>(${Math.round(prog.total_score/prog.max_score*100)}%)</span>
+         </div>`
+      : '';
+
+    return `
+    <div class="card" style="cursor:pointer;" onclick="goToCourse('${course.id}')">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px;">
+        <span class="badge badge-brown">${course.category || 'General'}</span>
+        <span class="badge badge-gray">${course.lesson_count} ${t('lessons')}</span>
+      </div>
+      <h2 style="font-size:17px; font-weight:600; margin-bottom:6px;">
+        ${Lang.t(course.title)}
+      </h2>
+      <p style="font-size:14px; color:var(--text-muted); margin-bottom:14px; line-height:1.5;">
+        ${Lang.t(course.description)}
+      </p>
+      ${prog ? `
+        <div class="progress-wrap" style="margin-bottom:6px;">
+          <div class="progress-bar" style="width:${pct}%"></div>
+        </div>
+        <div style="font-size:12px; color:var(--text-muted);">${pct}%</div>
+        ${scoreHtml}
+      ` : ''}
+      <div style="margin-top:14px;">
+        <button class="btn ${pct >= 100 ? 'btn-secondary' : 'btn-primary'}"
+          onclick="event.stopPropagation(); goToCourse('${course.id}')">
+          ${btnLabel}
+        </button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function goToCourse(id) {
+  window.location.href = `course.html?id=${id}`;
+}
+
+// User button top right
+function renderUserBtn() {
+  const el = document.getElementById('user-btn');
+  if (Auth.isLoggedIn()) {
+    el.innerHTML = `<button class="btn btn-secondary" style="padding:6px 12px; font-size:13px;"
+      onclick="Auth.signOut()">${t('sign_out')}</button>`;
+  } else {
+    el.innerHTML = `<button class="btn btn-primary" style="padding:6px 14px; font-size:13px;"
+      onclick="Auth.signInGoogle()">Sign in</button>`;
+  }
+}
+
+// Init
+(async () => {
+  Lang.init();
+  await Auth.init();
+  renderUserBtn();
+  applyLang();
+  await loadCourses();
+
+  document.addEventListener('langchange', applyLang);
+  document.addEventListener('authchange', () => { renderUserBtn(); loadCourses(); });
+})();
+
+</script>
+</body>
+</html>
