@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — Med-Learn</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .tabs { display:flex; gap:4px; border-bottom:1px solid var(--border); margin-bottom:1.25rem; }
+    .tab-btn { padding:10px 16px; border:none; background:none; font-size:14px;
+      font-weight:500; color:var(--text-muted); cursor:pointer; border-bottom:2px solid transparent;
+      margin-bottom:-1px; }
+    .tab-btn.active { color:var(--brown); border-bottom-color:var(--brown); }
+    .form-group { margin-bottom:1rem; }
+    .form-group label { display:block; font-size:13px; font-weight:500;
+      color:var(--text-muted); margin-bottom:5px; }
+    .form-group input, .form-group textarea, .form-group select {
+      width:100%; padding:10px 12px; border:1px solid var(--border);
+      border-radius:var(--radius-sm); font-size:15px; font-family:inherit;
+      background:var(--card); color:var(--text); }
+    .form-group textarea { min-height:80px; resize:vertical; }
+    .form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+      outline:none; border-color:var(--brown); }
+    .two-col { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+    .quiz-q { background:var(--bg); border-radius:var(--radius-sm);
+      padding:12px; margin-bottom:10px; border:1px solid var(--border); }
+    .delete-btn { background:none; border:none; color:var(--danger);
+      cursor:pointer; font-size:13px; padding:0; }
+    #modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.4);
+      display:none; align-items:flex-start; justify-content:center;
+      z-index:200; padding:1rem; overflow-y:auto; }
+    #modal-overlay.open { display:flex; }
+    #modal-box { background:var(--card); border-radius:var(--radius);
+      padding:1.5rem; width:100%; max-width:600px; margin:auto; }
+    #modal-box h3 { margin-bottom:1rem; }
+  </style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <a href="index.html" class="logo">Med<span>Learn</span> <span style="font-size:12px; color:var(--text-muted); font-weight:400;">Admin</span></a>
+    <button class="btn btn-secondary" style="font-size:13px; padding:6px 12px;"
+      onclick="Auth.signOut()">Sign out</button>
+  </div>
+</header>
+
+<!-- Modal -->
+<div id="modal-overlay">
+  <div id="modal-box">
+    <div id="modal-content"></div>
+  </div>
+</div>
+
+<main class="container">
+
+  <!-- Access denied -->
+  <div id="access-denied" style="display:none;" class="empty-state">
+    <div class="icon">🔒</div>
+    <p>Admin access only.</p>
+  </div>
+
+  <div id="admin-panel" style="display:none;">
+
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('courses')">Courses</button>
+      <button class="tab-btn" onclick="switchTab('lessons')">Lessons</button>
+      <button class="tab-btn" onclick="switchTab('users')">Users</button>
+    </div>
+
+    <!-- COURSES TAB -->
+    <div id="tab-courses">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+        <h2 style="font-size:17px;">Courses</h2>
+        <button class="btn btn-primary" style="font-size:13px; padding:8px 14px;"
+          onclick="openCourseModal()">+ New course</button>
+      </div>
+      <div id="courses-list"></div>
+    </div>
+
+    <!-- LESSONS TAB -->
+    <div id="tab-lessons" style="display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; flex-wrap:wrap; gap:10px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+          <h2 style="font-size:17px;">Lessons in:</h2>
+          <select id="lesson-course-select" onchange="loadLessonsForCourse(this.value)"
+            style="width:auto; padding:6px 10px; border:1px solid var(--border);
+            border-radius:var(--radius-sm); font-size:14px; background:var(--card);">
+            <option value="">— select course —</option>
+          </select>
+        </div>
+        <button class="btn btn-primary" style="font-size:13px; padding:8px 14px;"
+          onclick="openLessonModal()" id="new-lesson-btn" disabled>+ New lesson</button>
+      </div>
+      <div id="lessons-list"></div>
+    </div>
+
+    <!-- USERS TAB -->
+    <div id="tab-users" style="display:none;">
+      <h2 style="font-size:17px; margin-bottom:1rem;">Users</h2>
+      <div id="users-list"></div>
+    </div>
+
+  </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/lang.js"></script>
+<script src="js/auth.js"></script>
+<script>
+
+let allCourses = [];
+let selectedCourseId = null;
+let editingId = null; // course or lesson id being edited
+
+// ── Tab switching ──────────────────────────────────────────────
+
+function switchTab(name) {
+  ['courses','lessons','users'].forEach(t => {
+    document.getElementById(`tab-${t}`).style.display = t === name ? 'block' : 'none';
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+      b.classList.toggle('active', ['courses','lessons','users'][i] === name);
+    });
+  });
+  if (name === 'users') loadUsers();
+}
+
+// ── Courses ───────────────────────────────────────────────────
+
+async function loadCourses() {
+  const { data } = await sb.from('courses').select('*').order('created_at');
+  allCourses = data || [];
+  renderCoursesTable();
+  populateCourseSelect();
+}
+
+function renderCoursesTable() {
+  const el = document.getElementById('courses-list');
+  if (!allCourses.length) { el.innerHTML = '<p style="color:var(--text-muted);">No courses yet.</p>'; return; }
+  el.innerHTML = `
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="admin-table">
+      <thead><tr>
+        <th>Title (EN)</th><th>Category</th><th>Lessons</th><th>Published</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${allCourses.map(c => `
+        <tr>
+          <td style="font-weight:500;">${c.title?.en || c.title || ''}</td>
+          <td><span class="badge badge-brown">${c.category || '—'}</span></td>
+          <td>${c.lesson_count || 0}</td>
+          <td>
+            <button onclick="togglePublished('${c.id}', ${c.published})"
+              class="badge ${c.published ? 'badge-green' : 'badge-gray'}" style="cursor:pointer; border:none;">
+              ${c.published ? 'Yes' : 'No'}
+            </button>
+          </td>
+          <td style="display:flex; gap:8px;">
+            <button class="btn btn-secondary" style="font-size:12px; padding:5px 10px;"
+              onclick="openCourseModal('${c.id}')">Edit</button>
+            <button class="delete-btn" onclick="deleteCourse('${c.id}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+function openCourseModal(id = null) {
+  editingId = id;
+  const c = id ? allCourses.find(x => x.id === id) : null;
+  document.getElementById('modal-content').innerHTML = `
+    <h3>${id ? 'Edit course' : 'New course'}</h3>
+    <div class="two-col">
+      <div class="form-group">
+        <label>Title (English)</label>
+        <input id="f-title-en" value="${c?.title?.en || ''}" placeholder="Antibiotic dosing">
+      </div>
+      <div class="form-group">
+        <label>Title (Swahili)</label>
+        <input id="f-title-sw" value="${c?.title?.sw || ''}" placeholder="Kipimo cha dawa">
+      </div>
+    </div>
+    <div class="two-col">
+      <div class="form-group">
+        <label>Description (English)</label>
+        <textarea id="f-desc-en">${c?.description?.en || ''}</textarea>
+      </div>
+      <div class="form-group">
+        <label>Description (Swahili)</label>
+        <textarea id="f-desc-sw">${c?.description?.sw || ''}</textarea>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Category</label>
+      <input id="f-cat" value="${c?.category || ''}" placeholder="Pharmacology">
+    </div>
+    <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:1rem;">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCourse()">Save</button>
+    </div>`;
+  openModal();
+}
+
+async function saveCourse() {
+  const row = {
+    title: { en: v('f-title-en'), sw: v('f-title-sw') },
+    description: { en: v('f-desc-en'), sw: v('f-desc-sw') },
+    category: v('f-cat'),
+    published: editingId ? allCourses.find(c=>c.id===editingId)?.published : false,
+  };
+  if (editingId) {
+    await sb.from('courses').update(row).eq('id', editingId);
+  } else {
+    await sb.from('courses').insert({ ...row, lesson_count: 0, created_at: new Date().toISOString() });
+  }
+  closeModal();
+  showToast('Saved');
+  await loadCourses();
+}
+
+async function togglePublished(id, current) {
+  await sb.from('courses').update({ published: !current }).eq('id', id);
+  await loadCourses();
+}
+
+async function deleteCourse(id) {
+  if (!confirm('Delete this course? All lessons will also be deleted.')) return;
+  await sb.from('lessons').delete().eq('course_id', id);
+  await sb.from('courses').delete().eq('id', id);
+  showToast('Deleted');
+  await loadCourses();
+}
+
+// ── Lessons ───────────────────────────────────────────────────
+
+function populateCourseSelect() {
+  const sel = document.getElementById('lesson-course-select');
+  sel.innerHTML = '<option value="">— select course —</option>' +
+    allCourses.map(c => `<option value="${c.id}">${c.title?.en || c.title || c.id}</option>`).join('');
+  if (selectedCourseId) sel.value = selectedCourseId;
+}
+
+async function loadLessonsForCourse(courseId) {
+  selectedCourseId = courseId;
+  document.getElementById('new-lesson-btn').disabled = !courseId;
+  if (!courseId) { document.getElementById('lessons-list').innerHTML = ''; return; }
+
+  const { data } = await sb
+    .from('lessons')
+    .select('id, title, order_num, duration_min')
+    .eq('course_id', courseId)
+    .order('order_num');
+
+  renderLessonsTable(data || []);
+}
+
+function renderLessonsTable(lessons) {
+  const el = document.getElementById('lessons-list');
+  if (!lessons.length) { el.innerHTML = '<p style="color:var(--text-muted);">No lessons yet.</p>'; return; }
+  el.innerHTML = `
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="admin-table">
+      <thead><tr><th>#</th><th>Title (EN)</th><th>Duration</th><th>Quiz items</th><th></th></tr></thead>
+      <tbody>
+        ${lessons.map(l => `
+        <tr>
+          <td>${l.order_num}</td>
+          <td style="font-weight:500;">${l.title?.en || l.title || ''}</td>
+          <td>${l.duration_min ? l.duration_min + ' min' : '—'}</td>
+          <td>—</td>
+          <td style="display:flex; gap:8px;">
+            <button class="btn btn-secondary" style="font-size:12px; padding:5px 10px;"
+              onclick="openLessonModal('${l.id}')">Edit</button>
+            <button class="delete-btn" onclick="deleteLesson('${l.id}')">Delete</button>
+          </td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function openLessonModal(id = null) {
+  editingId = id;
+  let l = null;
+  if (id) {
+    const { data } = await sb.from('lessons').select('*').eq('id', id).single();
+    l = data;
+  }
+  const quiz = l?.quiz || [];
+  const content = l?.content || [];
+
+  document.getElementById('modal-content').innerHTML = `
+    <h3>${id ? 'Edit lesson' : 'New lesson'}</h3>
+
+    <div class="two-col">
+      <div class="form-group">
+        <label>Title (EN)</label>
+        <input id="f-ltitle-en" value="${l?.title?.en || ''}">
+      </div>
+      <div class="form-group">
+        <label>Title (SW)</label>
+        <input id="f-ltitle-sw" value="${l?.title?.sw || ''}">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Order number</label>
+      <input id="f-order" type="number" value="${l?.order_num || 1}" style="width:100px;">
+    </div>
+    <div class="form-group">
+      <label>Duration (minutes)</label>
+      <input id="f-duration" type="number" value="${l?.duration_min || ''}" placeholder="15" style="width:100px;">
+    </div>
+
+    <div class="two-col">
+      <div class="form-group">
+        <label>YouTube link / ID (English)</label>
+        <input id="f-vid-en" value="${l?.video_en || ''}" placeholder="https://youtu.be/...">
+      </div>
+      <div class="form-group">
+        <label>YouTube link / ID (Swahili)</label>
+        <input id="f-vid-sw" value="${l?.video_sw || ''}" placeholder="https://youtu.be/...">
+      </div>
+    </div>
+
+    <hr class="divider" style="margin:0.75rem 0;">
+    <p style="font-size:13px; font-weight:600; margin-bottom:8px;">Content blocks</p>
+    <div id="content-blocks">
+      ${content.map((b,i) => renderContentBlockEditor(b, i)).join('')}
+    </div>
+    <div style="display:flex; gap:8px; margin-bottom:1rem; flex-wrap:wrap;">
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="addBlock('text')">+ Text</button>
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="addBlock('heading')">+ Heading</button>
+      <button class="btn btn-secondary" style="font-size:12px;" onclick="addBlock('image')">+ Image</button>
+    </div>
+
+    <hr class="divider" style="margin:0.75rem 0;">
+    <p style="font-size:13px; font-weight:600; margin-bottom:8px;">Quiz questions</p>
+    <div id="quiz-questions">
+      ${quiz.map((q,i) => renderQuizEditor(q, i)).join('')}
+    </div>
+    <button class="btn btn-secondary" style="font-size:12px; margin-bottom:1rem;"
+      onclick="addQuizQuestion()">+ Add question</button>
+
+    <div style="display:flex; gap:10px; justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveLesson()">Save lesson</button>
+    </div>`;
+
+  openModal();
+}
+
+function renderContentBlockEditor(block, idx) {
+  if (block.type === 'image') {
+    return `<div class="quiz-q" data-bidx="${idx}" data-btype="image">
+      <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+        <span style="font-size:12px; color:var(--text-muted);">Image</span>
+        <button class="delete-btn" onclick="this.closest('[data-bidx]').remove()">Remove</button>
+      </div>
+      <input class="b-url" value="${block.url || ''}" placeholder="https://..." style="width:100%; padding:6px; margin-bottom:4px; border:1px solid var(--border); border-radius:4px;">
+      <input class="b-cap-en" value="${block.caption?.en || ''}" placeholder="Caption (EN)" style="width:100%; padding:6px; margin-bottom:4px; border:1px solid var(--border); border-radius:4px;">
+      <input class="b-cap-sw" value="${block.caption?.sw || ''}" placeholder="Caption (SW)" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px;">
+    </div>`;
+  }
+  const isHeading = block.type === 'heading';
+  return `<div class="quiz-q" data-bidx="${idx}" data-btype="${block.type}">
+    <div style="display:flex; justify-content:space-between; margin-bottom:6px;">
+      <span style="font-size:12px; color:var(--text-muted);">${isHeading ? 'Heading' : 'Text'}</span>
+      <button class="delete-btn" onclick="this.closest('[data-bidx]').remove()">Remove</button>
+    </div>
+    <textarea class="b-val-en" placeholder="English" style="width:100%; padding:6px; margin-bottom:4px; border:1px solid var(--border); border-radius:4px; font-size:14px;">${block.value?.en || ''}</textarea>
+    <textarea class="b-val-sw" placeholder="Swahili" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; font-size:14px;">${block.value?.sw || ''}</textarea>
+  </div>`;
+}
+
+let blockIdx = 100;
+function addBlock(type) {
+  const el = document.getElementById('content-blocks');
+  const div = document.createElement('div');
+  div.innerHTML = renderContentBlockEditor({ type, value: {en:'',sw:''}, url:'', caption:{en:'',sw:''} }, blockIdx++);
+  el.appendChild(div.firstElementChild);
+}
+
+function renderQuizEditor(q, idx) {
+  return `<div class="quiz-q" data-qidx="${idx}">
+    <div style="display:flex; justify-content:space-between; margin-bottom:8px;">
+      <span style="font-size:12px; font-weight:600;">Question ${idx + 1}</span>
+      <button class="delete-btn" onclick="this.closest('[data-qidx]').remove()">Remove</button>
+    </div>
+    <div class="two-col" style="margin-bottom:8px;">
+      <input class="q-en" value="${q.question?.en || ''}" placeholder="Question (EN)"
+        style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; font-size:14px;">
+      <input class="q-sw" value="${q.question?.sw || ''}" placeholder="Question (SW)"
+        style="width:100%; padding:6px; border:1px solid var(--border); border-radius:4px; font-size:14px;">
+    </div>
+    ${(q.options || [{en:'',sw:''},{en:'',sw:''},{en:'',sw:''},{en:'',sw:''}]).map((opt, oi) => `
+    <div style="display:flex; align-items:center; gap:6px; margin-bottom:6px;">
+      <input type="radio" name="correct-${idx}" value="${oi}" ${q.correct === oi ? 'checked' : ''}
+        style="width:auto; flex-shrink:0;">
+      <input class="opt-en-${oi}" value="${opt?.en || ''}" placeholder="${'ABCD'[oi]} — EN"
+        style="flex:1; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;">
+      <input class="opt-sw-${oi}" value="${opt?.sw || ''}" placeholder="${'ABCD'[oi]} — SW"
+        style="flex:1; padding:5px 8px; border:1px solid var(--border); border-radius:4px; font-size:13px;">
+    </div>`).join('')}
+    <p style="font-size:11px; color:var(--text-muted);">Select radio = correct answer</p>
+  </div>`;
+}
+
+let quizIdx = 100;
+function addQuizQuestion() {
+  const el = document.getElementById('quiz-questions');
+  const div = document.createElement('div');
+  div.innerHTML = renderQuizEditor({ question:{en:'',sw:''}, options:[{en:'',sw:''},{en:'',sw:''},{en:'',sw:''},{en:'',sw:''}], correct: 0 }, quizIdx++);
+  el.appendChild(div.firstElementChild);
+}
+
+async function saveLesson() {
+  // Collect content blocks
+  const blockEls = document.querySelectorAll('#content-blocks [data-btype]');
+  const content = Array.from(blockEls).map(el => {
+    const type = el.dataset.btype;
+    if (type === 'image') {
+      return { type, url: el.querySelector('.b-url').value,
+        caption: { en: el.querySelector('.b-cap-en').value, sw: el.querySelector('.b-cap-sw').value } };
+    }
+    return { type, value: { en: el.querySelector('.b-val-en').value, sw: el.querySelector('.b-val-sw').value } };
+  });
+
+  // Collect quiz
+  const quizEls = document.querySelectorAll('#quiz-questions [data-qidx]');
+  const quiz = Array.from(quizEls).map((el, i) => {
+    const correctRadio = el.querySelector(`input[type=radio][name^=correct]:checked`);
+    const correct = correctRadio ? parseInt(correctRadio.value) : 0;
+    return {
+      question: { en: el.querySelector('.q-en').value, sw: el.querySelector('.q-sw').value },
+      options: [0,1,2,3].map(oi => ({
+        en: el.querySelector(`.opt-en-${oi}`)?.value || '',
+        sw: el.querySelector(`.opt-sw-${oi}`)?.value || '',
+      })),
+      correct,
+    };
+  });
+
+  const row = {
+    course_id: selectedCourseId,
+    title: { en: v('f-ltitle-en'), sw: v('f-ltitle-sw') },
+    order_num: parseInt(v('f-order')) || 1,
+    duration_min: parseInt(v('f-duration')) || null,
+    video_en: v('f-vid-en'),
+    video_sw: v('f-vid-sw'),
+    content,
+    quiz,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (editingId) {
+    await sb.from('lessons').update(row).eq('id', editingId);
+  } else {
+    await sb.from('lessons').insert({ ...row, created_at: new Date().toISOString() });
+    // Update lesson_count in course
+    const { count } = await sb.from('lessons').select('id', { count: 'exact' }).eq('course_id', selectedCourseId);
+    await sb.from('courses').update({ lesson_count: count }).eq('id', selectedCourseId);
+  }
+
+  closeModal();
+  showToast('Lesson saved');
+  await loadLessonsForCourse(selectedCourseId);
+}
+
+async function deleteLesson(id) {
+  if (!confirm('Delete this lesson?')) return;
+  await sb.from('lessons').delete().eq('id', id);
+  showToast('Deleted');
+  await loadLessonsForCourse(selectedCourseId);
+}
+
+// ── Users ─────────────────────────────────────────────────────
+
+async function loadUsers() {
+  const { data } = await sb.from('profiles').select('id, email, role, created_at').order('created_at');
+  const users = data || [];
+  document.getElementById('users-list').innerHTML = `
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="admin-table">
+      <thead><tr><th>Email</th><th>Role</th><th>Joined</th><th></th></tr></thead>
+      <tbody>
+        ${users.map(u => `
+        <tr>
+          <td>${u.email || '—'}</td>
+          <td>
+            <select onchange="changeRole('${u.id}', this.value)"
+              style="border:1px solid var(--border); border-radius:4px; padding:3px 6px; font-size:13px;">
+              <option ${u.role==='learner'?'selected':''}>learner</option>
+              <option ${u.role==='admin'?'selected':''}>admin</option>
+            </select>
+          </td>
+          <td style="font-size:13px; color:var(--text-muted);">${u.created_at?.slice(0,10) || ''}</td>
+          <td></td>
+        </tr>`).join('')}
+      </tbody>
+    </table>
+  </div>`;
+}
+
+async function changeRole(userId, newRole) {
+  await sb.from('profiles').update({ role: newRole }).eq('id', userId);
+  showToast('Role updated');
+}
+
+// ── Modal helpers ─────────────────────────────────────────────
+
+function openModal() { document.getElementById('modal-overlay').classList.add('open'); }
+function closeModal() { document.getElementById('modal-overlay').classList.remove('open'); }
+
+// Close modal on overlay click
+document.getElementById('modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+});
+
+// ── Utilities ─────────────────────────────────────────────────
+
+function v(id) { return (document.getElementById(id)?.value || '').trim(); }
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ── Init ─────────────────────────────────────────────────────
+
+(async () => {
+  Lang.init();
+  await Auth.init();
+
+  if (!Auth.isLoggedIn() || !Auth.isAdmin()) {
+    document.getElementById('access-denied').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('admin-panel').style.display = 'block';
+  await loadCourses();
+})();
+
+</script>
+</body>
+</html>
