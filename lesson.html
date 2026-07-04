@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lesson — Med-Learn</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <a id="back-link" href="index.html" class="logo" style="font-size:15px; font-weight:500; color:var(--text-muted);">
+      ← <span id="course-name-header">Course</span>
+    </a>
+    <div class="lang-toggle">
+      <button class="lang-btn" data-lang="en">EN</button>
+      <button class="lang-btn" data-lang="sw">SW</button>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+  <div id="lesson-content">
+    <div class="spinner"></div>
+  </div>
+</main>
+
+<div id="toast" class="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/config.js"></script>
+<script src="js/lang.js"></script>
+<script src="js/auth.js"></script>
+<script>
+
+const I18N = {
+  en: {
+    lesson: 'Lesson',
+    video_en: 'Watch in English',
+    video_sw: 'Watch in Swahili',
+    no_video: 'No video available for this language.',
+    reading: 'Reading material',
+    quiz_title: 'Knowledge check',
+    quiz_submit: 'Submit answers',
+    quiz_retry: 'Try again',
+    quiz_next: 'Next lesson →',
+    quiz_back: 'Back to course',
+    quiz_score: 'Your score',
+    quiz_of: 'of',
+    quiz_pass: 'Well done!',
+    quiz_fail: 'Keep studying and try again.',
+    quiz_already: 'You already completed this lesson.',
+    select_all: 'Answer all questions before submitting.',
+    next_lesson: 'Next lesson',
+    no_next: 'You completed all lessons!',
+    back_course: '← Back to course',
+  },
+  sw: {
+    lesson: 'Somo',
+    video_en: 'Tazama kwa Kiingereza',
+    video_sw: 'Tazama kwa Kiswahili',
+    no_video: 'Hakuna video kwa lugha hii.',
+    reading: 'Nyenzo za kusoma',
+    quiz_title: 'Angalia ujuzi wako',
+    quiz_submit: 'Wasilisha majibu',
+    quiz_retry: 'Jaribu tena',
+    quiz_next: 'Somo lijalo →',
+    quiz_back: 'Rudi kwa kozi',
+    quiz_score: 'Alama zako',
+    quiz_of: 'kati ya',
+    quiz_pass: 'Hongera!',
+    quiz_fail: 'Endelea kusoma na jaribu tena.',
+    quiz_already: 'Umekamilisha somo hili tayari.',
+    select_all: 'Jibu maswali yote kabla ya kuwasilisha.',
+    next_lesson: 'Somo lijalo',
+    no_next: 'Umekamilisha masomo yote!',
+    back_course: '← Rudi kwa kozi',
+  }
+};
+
+function t(key) { return I18N[Lang.current][key] || key; }
+
+const params = new URLSearchParams(location.search);
+const courseId  = params.get('course');
+const lessonId  = params.get('lesson');
+
+let lesson = null;
+let course = null;
+let allLessons = [];
+let quizSubmitted = false;
+let selectedAnswers = {}; // { question_index: option_index }
+let alreadyDone = false;
+
+async function load() {
+  if (!courseId || !lessonId) { location.href = 'index.html'; return; }
+
+  const [{ data: l }, { data: c }, { data: ls }] = await Promise.all([
+    sb.from('lessons').select('*').eq('id', lessonId).single(),
+    sb.from('courses').select('id, title').eq('id', courseId).single(),
+    sb.from('lessons').select('id, title, order_num').eq('course_id', courseId).order('order_num'),
+  ]);
+
+  if (!l || !c) { location.href = 'index.html'; return; }
+  lesson = l; course = c; allLessons = ls || [];
+
+  // Update back link
+  document.getElementById('back-link').href = `course.html?id=${courseId}`;
+  document.getElementById('course-name-header').textContent = Lang.t(course.title);
+
+  // Check if already done
+  if (Auth.isLoggedIn()) {
+    const { data: p } = await sb
+      .from('user_progress')
+      .select('lesson_scores')
+      .eq('user_id', Auth.user.id)
+      .eq('course_id', courseId)
+      .single();
+    alreadyDone = !!(p?.lesson_scores?.[lessonId]);
+  }
+
+  render();
+}
+
+function getNextLesson() {
+  const idx = allLessons.findIndex(l => l.id === lessonId);
+  return idx >= 0 && idx < allLessons.length - 1 ? allLessons[idx + 1] : null;
+}
+
+function render() {
+  document.getElementById('course-name-header').textContent = Lang.t(course.title);
+
+  const videoId = Lang.current === 'sw'
+    ? (lesson.video_sw || lesson.video_en)
+    : (lesson.video_en || lesson.video_sw);
+
+  const otherLang = Lang.current === 'sw' ? 'en' : 'sw';
+  const otherVideoId = lesson[`video_${otherLang}`];
+
+  const content = lesson.content || []; // array of {type, value:{en,sw}} or {type, url, caption}
+  const quiz    = lesson.quiz    || []; // array of {question:{en,sw}, options:[{en,sw}], correct}
+
+  document.getElementById('lesson-content').innerHTML = `
+
+    <!-- Lesson title -->
+    <div style="margin-bottom:1.25rem;">
+      <div style="font-size:13px; color:var(--text-muted); margin-bottom:4px;">
+        ${t('lesson')} ${getLessonNum()}
+      </div>
+      <h1 style="font-size:20px; font-weight:600;">${Lang.t(lesson.title)}</h1>
+    </div>
+
+    <!-- Video section -->
+    ${renderVideo(videoId, otherVideoId)}
+
+    <hr class="divider">
+
+    <!-- Text content -->
+    ${content.length ? `
+      <div class="section-title">${t('reading')}</div>
+      ${content.map(block => renderContentBlock(block)).join('')}
+      <hr class="divider">
+    ` : ''}
+
+    <!-- Quiz -->
+    ${quiz.length ? renderQuiz(quiz) : ''}
+
+    <!-- Bottom nav -->
+    <div style="margin-top:1.5rem; display:flex; gap:10px; flex-wrap:wrap;">
+      <a href="course.html?id=${courseId}" class="btn btn-secondary">${t('back_course')}</a>
+    </div>
+  `;
+}
+
+function getLessonNum() {
+  const idx = allLessons.findIndex(l => l.id === lessonId);
+  return idx >= 0 ? idx + 1 : '?';
+}
+
+function renderVideo(videoId, otherVideoId) {
+  if (!videoId && !otherVideoId) return '';
+
+  const embedUrl = id => `https://www.youtube.com/embed/${extractYoutubeId(id)}`;
+
+  return `
+  <div style="margin-bottom:1.25rem;">
+    <div class="video-wrap" id="video-wrap">
+      ${videoId
+        ? `<iframe src="${embedUrl(videoId)}" allowfullscreen loading="lazy"></iframe>`
+        : `<div class="video-placeholder">
+             <span style="font-size:32px;">🎬</span>
+             <span>${t('no_video')}</span>
+           </div>`
+      }
+    </div>
+    ${otherVideoId ? `
+    <div style="margin-top:8px; text-align:right;">
+      <button class="btn btn-secondary" style="font-size:13px; padding:6px 12px;"
+        onclick="switchVideoLang()">
+        ${Lang.current === 'sw' ? t('video_en') : t('video_sw')}
+      </button>
+    </div>` : ''}
+  </div>`;
+}
+
+function extractYoutubeId(urlOrId) {
+  if (!urlOrId) return '';
+  // Already just an ID (no slash or dot)
+  if (/^[A-Za-z0-9_-]{11}$/.test(urlOrId)) return urlOrId;
+  const m = urlOrId.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : urlOrId;
+}
+
+let videoLangOverride = null;
+function switchVideoLang() {
+  const altLang = Lang.current === 'sw' ? 'en' : 'sw';
+  const altId = lesson[`video_${altLang}`];
+  if (!altId) return;
+  const wrap = document.getElementById('video-wrap');
+  if (wrap) {
+    const id = extractYoutubeId(altId);
+    wrap.innerHTML = `<iframe src="https://www.youtube.com/embed/${id}" allowfullscreen loading="lazy"></iframe>`;
+  }
+}
+
+function renderContentBlock(block) {
+  if (block.type === 'text') {
+    return `<div class="content-block"><p>${Lang.t(block.value)}</p></div>`;
+  }
+  if (block.type === 'heading') {
+    return `<div class="content-block"><h3>${Lang.t(block.value)}</h3></div>`;
+  }
+  if (block.type === 'image') {
+    return `<div class="content-block">
+      <img src="${block.url}" alt="${Lang.t(block.caption) || ''}">
+      ${block.caption ? `<p style="font-size:12px; color:var(--text-muted); margin-top:4px; text-align:center;">${Lang.t(block.caption)}</p>` : ''}
+    </div>`;
+  }
+  return '';
+}
+
+function renderQuiz(quiz) {
+  if (quizSubmitted || alreadyDone) {
+    // Show answers as read-only
+    return renderQuizResults(quiz, alreadyDone);
+  }
+
+  return `
+  <div class="section-title">${t('quiz_title')}</div>
+  <div id="quiz-form">
+    ${quiz.map((q, qi) => `
+      <div style="margin-bottom:1.25rem;" data-qi="${qi}">
+        <p style="font-weight:500; margin-bottom:10px; line-height:1.5;">
+          ${qi + 1}. ${Lang.t(q.question)}
+        </p>
+        ${q.options.map((opt, oi) => `
+          <label class="quiz-option" id="opt-${qi}-${oi}" onclick="selectOption(${qi}, ${oi})">
+            <input type="radio" name="q${qi}" value="${oi}">
+            <div class="quiz-letter">${'ABCD'[oi]}</div>
+            <div style="font-size:15px; line-height:1.4;">${Lang.t(opt)}</div>
+          </label>
+        `).join('')}
+      </div>
+    `).join('')}
+
+    <button class="btn btn-primary btn-full" style="margin-top:0.5rem;"
+      onclick="submitQuiz()">
+      ${t('quiz_submit')}
+    </button>
+  </div>`;
+}
+
+function renderQuizResults(quiz, readonly = false) {
+  const maxScore = quiz.length;
+  const earned = readonly
+    ? '?'
+    : quiz.reduce((s, q, i) => s + (selectedAnswers[i] === q.correct ? 1 : 0), 0);
+  const pct = readonly ? null : Math.round(earned / maxScore * 100);
+  const passed = readonly ? true : pct >= 60;
+
+  const next = getNextLesson();
+
+  return `
+  <div class="section-title">${t('quiz_title')}</div>
+
+  ${readonly ? `
+  <div class="card" style="background:var(--brown-light); border-color:var(--brown); margin-bottom:1rem;">
+    <p style="font-size:14px; color:var(--brown-dark);">${t('quiz_already')}</p>
+  </div>` : `
+  <div class="card" style="background:${passed ? 'var(--green-light)' : 'var(--danger-light)'};
+       border-color:${passed ? 'var(--green)' : 'var(--danger)'}; margin-bottom:1rem; text-align:center;">
+    <div style="font-size:28px; font-weight:700; color:${passed ? 'var(--green)' : 'var(--danger)'};">
+      ${earned}/${maxScore}
+    </div>
+    <div style="font-size:14px; color:var(--text-muted);">${t('quiz_score')} • ${pct}%</div>
+    <div style="margin-top:6px; font-weight:500;">${passed ? t('quiz_pass') : t('quiz_fail')}</div>
+  </div>`}
+
+  ${quiz.map((q, qi) => `
+    <div style="margin-bottom:1.25rem;">
+      <p style="font-weight:500; margin-bottom:10px; line-height:1.5;">
+        ${qi + 1}. ${Lang.t(q.question)}
+      </p>
+      ${q.options.map((opt, oi) => {
+        const isCorrect = oi === q.correct;
+        const isSelected = !readonly && selectedAnswers[qi] === oi;
+        let cls = 'quiz-option';
+        if (!readonly) {
+          if (isCorrect) cls += ' correct';
+          else if (isSelected) cls += ' wrong';
+        }
+        return `
+        <div class="${cls}" style="cursor:default;">
+          <div class="quiz-letter">${'ABCD'[oi]}</div>
+          <div style="font-size:15px; line-height:1.4;">${Lang.t(opt)}</div>
+          ${isCorrect && !readonly ? ' ✓' : ''}
+        </div>`;
+      }).join('')}
+    </div>
+  `).join('')}
+
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin-top:0.5rem;">
+    ${!readonly && !passed ? `
+      <button class="btn btn-secondary" onclick="retryQuiz()">${t('quiz_retry')}</button>` : ''}
+    ${next ? `
+      <a href="lesson.html?course=${courseId}&lesson=${next.id}" class="btn btn-green">
+        ${t('quiz_next')}
+      </a>` : `
+      <a href="course.html?id=${courseId}" class="btn btn-green">${t('quiz_back')}</a>`}
+  </div>`;
+}
+
+function selectOption(qi, oi) {
+  selectedAnswers[qi] = oi;
+  // Update visual
+  const q = lesson.quiz[qi];
+  q.options.forEach((_, i) => {
+    const el = document.getElementById(`opt-${qi}-${i}`);
+    if (el) el.classList.toggle('selected', i === oi);
+  });
+}
+
+async function submitQuiz() {
+  const quiz = lesson.quiz || [];
+  // Check all answered
+  if (Object.keys(selectedAnswers).length < quiz.length) {
+    showToast(t('select_all'));
+    return;
+  }
+
+  const maxScore = quiz.length;
+  const earned = quiz.reduce((s, q, i) => s + (selectedAnswers[i] === q.correct ? 1 : 0), 0);
+
+  quizSubmitted = true;
+
+  // Save to Supabase
+  if (Auth.isLoggedIn()) {
+    await saveProgress(earned, maxScore);
+  }
+
+  render();
+}
+
+async function saveProgress(earned, maxScore) {
+  // Get or create user_progress row
+  const { data: existing } = await sb
+    .from('user_progress')
+    .select('*')
+    .eq('user_id', Auth.user.id)
+    .eq('course_id', courseId)
+    .single();
+
+  const scores = existing?.lesson_scores || {};
+  scores[lessonId] = { score: earned, max: maxScore };
+
+  const completedCount = Object.keys(scores).length;
+  const totalScore = Object.values(scores).reduce((s, v) => s + v.score, 0);
+  const maxTotal   = Object.values(scores).reduce((s, v) => s + v.max,   0);
+
+  const row = {
+    user_id: Auth.user.id,
+    course_id: courseId,
+    lesson_scores: scores,
+    completed_lessons: completedCount,
+    total_score: totalScore,
+    max_score: maxTotal,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (existing) {
+    await sb.from('user_progress').update(row).eq('user_id', Auth.user.id).eq('course_id', courseId);
+  } else {
+    await sb.from('user_progress').insert({ ...row, created_at: new Date().toISOString() });
+  }
+}
+
+function retryQuiz() {
+  quizSubmitted = false;
+  selectedAnswers = {};
+  render();
+}
+
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+function applyLang() {
+  if (course) {
+    document.getElementById('course-name-header').textContent = Lang.t(course.title);
+    render();
+  }
+}
+
+(async () => {
+  Lang.init();
+  await Auth.init();
+  await load();
+  document.addEventListener('langchange', applyLang);
+})();
+
+</script>
+</body>
+</html>
