@@ -39,7 +39,7 @@ const I18N = {
     lesson: 'Lesson',
     video_en: 'Watch in English',
     video_sw: 'Watch in Swahili',
-    no_video: 'No video available for this language.',
+    no_video: 'Video coming soon.',
     reading: 'Reading material',
     quiz_title: 'Knowledge check',
     quiz_submit: 'Submit answers',
@@ -60,7 +60,7 @@ const I18N = {
     lesson: 'Somo',
     video_en: 'Tazama kwa Kiingereza',
     video_sw: 'Tazama kwa Kiswahili',
-    no_video: 'Hakuna video kwa lugha hii.',
+    no_video: 'Video inakuja hivi karibuni.',
     reading: 'Nyenzo za kusoma',
     quiz_title: 'Angalia ujuzi wako',
     quiz_submit: 'Wasilisha majibu',
@@ -89,7 +89,7 @@ let lesson = null;
 let course = null;
 let allLessons = [];
 let quizSubmitted = false;
-let selectedAnswers = {}; // { question_index: option_index }
+let selectedAnswers = {};
 let alreadyDone = false;
 
 async function load() {
@@ -104,11 +104,9 @@ async function load() {
   if (!l || !c) { location.href = 'index.html'; return; }
   lesson = l; course = c; allLessons = ls || [];
 
-  // Update back link
   document.getElementById('back-link').href = `course.html?id=${courseId}`;
   document.getElementById('course-name-header').textContent = Lang.t(course.title);
 
-  // Check if already done
   if (Auth.isLoggedIn()) {
     const { data: p } = await sb
       .from('user_progress')
@@ -137,12 +135,11 @@ function render() {
   const otherLang = Lang.current === 'sw' ? 'en' : 'sw';
   const otherVideoId = lesson[`video_${otherLang}`];
 
-  const content = lesson.content || []; // array of {type, value:{en,sw}} or {type, url, caption}
-  const quiz    = lesson.quiz    || []; // array of {question:{en,sw}, options:[{en,sw}], correct}
+  const content = lesson.content || [];
+  const quiz    = lesson.quiz    || [];
 
   document.getElementById('lesson-content').innerHTML = `
 
-    <!-- Lesson title -->
     <div style="margin-bottom:1.25rem;">
       <div style="font-size:13px; color:var(--text-muted); margin-bottom:4px;">
         ${t('lesson')} ${getLessonNum()}
@@ -150,22 +147,18 @@ function render() {
       <h1 style="font-size:20px; font-weight:600;">${Lang.t(lesson.title)}</h1>
     </div>
 
-    <!-- Video section -->
     ${renderVideo(videoId, otherVideoId)}
 
     <hr class="divider">
 
-    <!-- Text content -->
     ${content.length ? `
       <div class="section-title">${t('reading')}</div>
       ${content.map(block => renderContentBlock(block)).join('')}
       <hr class="divider">
     ` : ''}
 
-    <!-- Quiz -->
     ${quiz.length ? renderQuiz(quiz) : ''}
 
-    <!-- Bottom nav -->
     <div style="margin-top:1.5rem; display:flex; gap:10px; flex-wrap:wrap;">
       <a href="course.html?id=${courseId}" class="btn btn-secondary">${t('back_course')}</a>
     </div>
@@ -178,8 +171,6 @@ function getLessonNum() {
 }
 
 function renderVideo(videoId, otherVideoId) {
-  if (!videoId && !otherVideoId) return '';
-
   const embedUrl = id => `https://www.youtube.com/embed/${extractYoutubeId(id)}`;
 
   return `
@@ -205,13 +196,11 @@ function renderVideo(videoId, otherVideoId) {
 
 function extractYoutubeId(urlOrId) {
   if (!urlOrId) return '';
-  // Already just an ID (no slash or dot)
   if (/^[A-Za-z0-9_-]{11}$/.test(urlOrId)) return urlOrId;
   const m = urlOrId.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
   return m ? m[1] : urlOrId;
 }
 
-let videoLangOverride = null;
 function switchVideoLang() {
   const altLang = Lang.current === 'sw' ? 'en' : 'sw';
   const altId = lesson[`video_${altLang}`];
@@ -225,15 +214,19 @@ function switchVideoLang() {
 
 function renderContentBlock(block) {
   if (block.type === 'text') {
-    return `<div class="content-block"><p>${Lang.t(block.value)}</p></div>`;
+    return `<div class="content-block"><p style="line-height:1.75;">${Lang.t(block.value)}</p></div>`;
   }
   if (block.type === 'heading') {
-    return `<div class="content-block"><h3>${Lang.t(block.value)}</h3></div>`;
+    return `<div class="content-block"><h3 style="font-size:17px; margin-bottom:6px;">${Lang.t(block.value)}</h3></div>`;
   }
   if (block.type === 'image') {
-    return `<div class="content-block">
-      <img src="${block.url}" alt="${Lang.t(block.caption) || ''}">
-      ${block.caption ? `<p style="font-size:12px; color:var(--text-muted); margin-top:4px; text-align:center;">${Lang.t(block.caption)}</p>` : ''}
+    // Supports url_en / url_sw for language-specific images, falls back to shared url
+    const url = block[`url_${Lang.current}`] || block.url_en || block.url_sw || block.url || '';
+    if (!url) return '';
+    return `<div class="content-block" style="margin:1rem 0;">
+      <img src="${url}" alt="${Lang.t(block.caption) || ''}"
+        style="width:100%; border-radius:var(--radius-sm); display:block;">
+      ${block.caption ? `<p style="font-size:12px; color:var(--text-muted); margin-top:6px; text-align:center;">${Lang.t(block.caption)}</p>` : ''}
     </div>`;
   }
   return '';
@@ -241,7 +234,6 @@ function renderContentBlock(block) {
 
 function renderQuiz(quiz) {
   if (quizSubmitted || alreadyDone) {
-    // Show answers as read-only
     return renderQuizResults(quiz, alreadyDone);
   }
 
@@ -262,7 +254,6 @@ function renderQuiz(quiz) {
         `).join('')}
       </div>
     `).join('')}
-
     <button class="btn btn-primary btn-full" style="margin-top:0.5rem;"
       onclick="submitQuiz()">
       ${t('quiz_submit')}
@@ -277,7 +268,6 @@ function renderQuizResults(quiz, readonly = false) {
     : quiz.reduce((s, q, i) => s + (selectedAnswers[i] === q.correct ? 1 : 0), 0);
   const pct = readonly ? null : Math.round(earned / maxScore * 100);
   const passed = readonly ? true : pct >= 60;
-
   const next = getNextLesson();
 
   return `
@@ -332,7 +322,6 @@ function renderQuizResults(quiz, readonly = false) {
 
 function selectOption(qi, oi) {
   selectedAnswers[qi] = oi;
-  // Update visual
   const q = lesson.quiz[qi];
   q.options.forEach((_, i) => {
     const el = document.getElementById(`opt-${qi}-${i}`);
@@ -342,27 +331,18 @@ function selectOption(qi, oi) {
 
 async function submitQuiz() {
   const quiz = lesson.quiz || [];
-  // Check all answered
   if (Object.keys(selectedAnswers).length < quiz.length) {
     showToast(t('select_all'));
     return;
   }
-
   const maxScore = quiz.length;
   const earned = quiz.reduce((s, q, i) => s + (selectedAnswers[i] === q.correct ? 1 : 0), 0);
-
   quizSubmitted = true;
-
-  // Save to Supabase
-  if (Auth.isLoggedIn()) {
-    await saveProgress(earned, maxScore);
-  }
-
+  if (Auth.isLoggedIn()) await saveProgress(earned, maxScore);
   render();
 }
 
 async function saveProgress(earned, maxScore) {
-  // Get or create user_progress row
   const { data: existing } = await sb
     .from('user_progress')
     .select('*')
