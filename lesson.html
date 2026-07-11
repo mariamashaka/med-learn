@@ -299,11 +299,20 @@ function renderQuizResults(quiz, readonly = false) {
           if (isCorrect) cls += ' correct';
           else if (isSelected) cls += ' wrong';
         }
+        const explanation = opt.explanation ? Lang.t(opt.explanation) : null;
+        const showExplanation = !readonly && (isCorrect || isSelected) && explanation;
         return `
         <div class="${cls}" style="cursor:default;">
           <div class="quiz-letter">${'ABCD'[oi]}</div>
-          <div style="font-size:15px; line-height:1.4;">${Lang.t(opt)}</div>
-          ${isCorrect && !readonly ? ' ✓' : ''}
+          <div style="flex:1;">
+            <div style="font-size:15px; line-height:1.4;">${Lang.t(opt)}</div>
+            ${showExplanation ? `
+            <div style="font-size:13px; margin-top:6px; padding-top:6px;
+              border-top:1px solid ${isCorrect ? 'var(--green)' : 'var(--danger)'};
+              color:${isCorrect ? 'var(--green)' : 'var(--danger)'};">
+              ${explanation}
+            </div>` : ''}
+          </div>
         </div>`;
       }).join('')}
     </div>
