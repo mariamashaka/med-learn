@@ -219,6 +219,20 @@ function renderContentBlock(block) {
   if (block.type === 'heading') {
     return `<div class="content-block"><h3 style="font-size:17px; margin-bottom:6px;">${Lang.t(block.value)}</h3></div>`;
   }
+  if (block.type === 'formula') {
+    return `<div class="content-block" style="margin:1.25rem 0;">
+      <div style="background:var(--brown-light); border-left:4px solid var(--brown);
+        border-radius:var(--radius-sm); padding:14px 16px;">
+        <div style="font-size:12px; font-weight:600; text-transform:uppercase;
+          letter-spacing:0.06em; color:var(--brown); margin-bottom:6px;">
+          ${Lang.t(block.label) || ''}
+        </div>
+        <div style="font-size:16px; font-weight:600; color:var(--text); line-height:1.6;">
+          ${Lang.t(block.value)}
+        </div>
+      </div>
+    </div>`;
+  }
   if (block.type === 'links') {
     return `<div class="content-block" style="margin:1.25rem 0;">
       <div class="card" style="background:var(--brown-light); border-color:var(--border);">
