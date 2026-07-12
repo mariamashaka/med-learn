@@ -219,6 +219,21 @@ function renderContentBlock(block) {
   if (block.type === 'heading') {
     return `<div class="content-block"><h3 style="font-size:17px; margin-bottom:6px;">${Lang.t(block.value)}</h3></div>`;
   }
+  if (block.type === 'links') {
+    return `<div class="content-block" style="margin:1.25rem 0;">
+      <div class="card" style="background:var(--brown-light); border-color:var(--border);">
+        <div class="section-title" style="margin-bottom:0.75rem;">${Lang.t(block.title)}</div>
+        ${block.items.map(item => `
+          <a href="${item.url}" target="_blank"
+            style="display:flex; align-items:center; gap:10px; padding:10px 0;
+            border-bottom:1px solid var(--border); text-decoration:none; color:var(--text);">
+            <span style="font-size:20px;">📄</span>
+            <span style="font-size:14px; flex:1;">${Lang.t(item.label)}</span>
+            <span style="font-size:13px; color:var(--brown);">↓</span>
+          </a>`).join('')}
+      </div>
+    </div>`;
+  }
   if (block.type === 'image') {
     // Supports url_en / url_sw for language-specific images, falls back to shared url
     const url = block[`url_${Lang.current}`] || block.url_en || block.url_sw || block.url || '';
