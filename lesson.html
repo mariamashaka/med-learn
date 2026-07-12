@@ -214,7 +214,21 @@ function switchVideoLang() {
 
 function renderContentBlock(block) {
   if (block.type === 'text') {
-    return `<div class="content-block"><p style="line-height:1.75;">${Lang.t(block.value)}</p></div>`;
+    // Convert \n to <br> and • to styled bullet lines
+    const raw = Lang.t(block.value);
+    const html = raw
+      .split('\n')
+      .map(line => {
+        if (line.trim().startsWith('•')) {
+          return `<div style="display:flex; gap:8px; margin:4px 0;">
+            <span style="color:var(--brown); flex-shrink:0;">•</span>
+            <span>${line.trim().substring(1).trim()}</span>
+          </div>`;
+        }
+        return line ? `<p style="line-height:1.75; margin-bottom:6px;">${line}</p>` : '';
+      })
+      .join('');
+    return `<div class="content-block">${html}</div>`;
   }
   if (block.type === 'heading') {
     return `<div class="content-block"><h3 style="font-size:17px; margin-bottom:6px;">${Lang.t(block.value)}</h3></div>`;
