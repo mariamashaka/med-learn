@@ -11,31 +11,14 @@
 <header class="header">
   <div class="header-inner">
     <a href="index.html" class="logo">Med<span>Learn</span></a>
-    <div style="display:flex; align-items:center; gap:12px;">
-      <div class="lang-toggle">
-        <button class="lang-btn" data-lang="en">EN</button>
-        <button class="lang-btn" data-lang="sw">SW</button>
-      </div>
-      <div id="user-btn"></div>
+    <div class="lang-toggle">
+      <button class="lang-btn" data-lang="en">EN</button>
+      <button class="lang-btn" data-lang="sw">SW</button>
     </div>
   </div>
 </header>
 
-<!-- Auth overlay -->
-<div id="auth-overlay" class="auth-overlay" style="display:none">
-  <div class="auth-box">
-    <div style="font-size:40px; margin-bottom:0.5rem;">🎓</div>
-    <h2 id="login-title">Sign in to continue</h2>
-    <p id="login-desc">Access all courses and track your progress.</p>
-    <button class="btn btn-primary btn-full" onclick="Auth.signInGoogle()">
-      Continue with Google
-    </button>
-  </div>
-</div>
-
 <main class="container">
-
-  <!-- Page title -->
   <div style="margin-bottom:1.25rem;">
     <h1 id="page-title" style="font-size:22px; font-weight:600;">Courses</h1>
     <p id="page-subtitle" style="color:var(--text-muted); font-size:14px; margin-top:4px;">
@@ -43,67 +26,56 @@
     </p>
   </div>
 
-  <!-- Category filter -->
   <div id="category-filter" style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:1.25rem;"></div>
 
-  <!-- Course grid -->
   <div id="course-grid" class="course-grid" style="display:flex; flex-direction:column; gap:1rem;">
     <div class="spinner"></div>
   </div>
-
 </main>
 
-<!-- Scripts -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
 <script src="js/lang.js"></script>
-<script src="js/auth.js"></script>
 <script>
 
 const I18N = {
   en: {
     page_title: 'Courses',
     page_subtitle: 'Select a course to start learning',
-    login_title: 'Sign in to continue',
-    login_desc: 'Access all courses and track your progress.',
     all: 'All',
     lessons: 'lessons',
     start: 'Start',
     continue: 'Continue',
     completed: 'Completed',
     your_progress: 'Your progress',
-    sign_out: 'Sign out',
   },
   sw: {
     page_title: 'Kozi',
     page_subtitle: 'Chagua kozi kuanza kujifunza',
-    login_title: 'Ingia kuendelea',
-    login_desc: 'Fikia kozi zote na ufuatilie maendeleo yako.',
     all: 'Zote',
     lessons: 'masomo',
     start: 'Anza',
     continue: 'Endelea',
     completed: 'Imekamilika',
     your_progress: 'Maendeleo yako',
-    sign_out: 'Toka',
   }
 };
 
 function t(key) { return I18N[Lang.current][key] || key; }
 
-// Translate static elements
-function applyLang() {
-  document.getElementById('page-title').textContent = t('page_title');
-  document.getElementById('page-subtitle').textContent = t('page_subtitle');
-  document.getElementById('login-title').textContent = t('login_title');
-  document.getElementById('login-desc').textContent = t('login_desc');
-  // Re-render cards to flip text
-  if (allCourses.length) renderCourses(allCourses);
+function getLocalProgress(cId) {
+  try { return JSON.parse(localStorage.getItem('progress_' + cId) || '{}'); }
+  catch { return {}; }
 }
 
 let allCourses = [];
-let userProgress = {};
 let activeCategory = 'all';
+
+function applyLang() {
+  document.getElementById('page-title').textContent = t('page_title');
+  document.getElementById('page-subtitle').textContent = t('page_subtitle');
+  if (allCourses.length) renderCourses(allCourses);
+}
 
 async function loadCourses() {
   const { data, error } = await sb
@@ -121,20 +93,6 @@ async function loadCourses() {
   allCourses = data;
   renderCategories(data);
   renderCourses(data);
-
-  if (Auth.isLoggedIn()) await loadProgress();
-}
-
-async function loadProgress() {
-  const { data } = await sb
-    .from('user_progress')
-    .select('course_id, completed_lessons, total_score, max_score')
-    .eq('user_id', Auth.user.id);
-
-  if (data) {
-    data.forEach(p => { userProgress[p.course_id] = p; });
-    renderCourses(allCourses); // re-render with progress
-  }
 }
 
 function renderCategories(courses) {
@@ -164,23 +122,21 @@ function renderCourses(courses) {
   }
 
   grid.innerHTML = courses.map(course => {
-    const prog = userProgress[course.id];
-    const pct = prog
-      ? Math.round((prog.completed_lessons / course.lesson_count) * 100)
-      : 0;
-    const btnLabel = !Auth.isLoggedIn()
-      ? t('start')
-      : prog?.completed_lessons >= course.lesson_count
-        ? t('completed')
-        : prog?.completed_lessons > 0
-          ? t('continue')
-          : t('start');
+    const scores = getLocalProgress(course.id);
+    const completedCount = Object.keys(scores).length;
+    const total = course.lesson_count || 0;
+    const pct = total ? Math.round(completedCount / total * 100) : 0;
 
-    const scoreHtml = prog && prog.max_score > 0
+    let earned = 0, max = 0;
+    Object.values(scores).forEach(s => { earned += s.score || 0; max += s.max || 0; });
+
+    const btnLabel = pct >= 100 ? t('completed') : completedCount > 0 ? t('continue') : t('start');
+
+    const scoreHtml = max > 0
       ? `<div class="score-line" style="margin-top:6px;">
            <span>${t('your_progress')}:</span>
-           <span class="score-value">${prog.total_score}/${prog.max_score}</span>
-           <span>(${Math.round(prog.total_score/prog.max_score*100)}%)</span>
+           <span class="score-value">${earned}/${max}</span>
+           <span>(${Math.round(earned/max*100)}%)</span>
          </div>`
       : '';
 
@@ -196,7 +152,7 @@ function renderCourses(courses) {
       <p style="font-size:14px; color:var(--text-muted); margin-bottom:14px; line-height:1.5;">
         ${Lang.t(course.description)}
       </p>
-      ${prog ? `
+      ${completedCount > 0 ? `
         <div class="progress-wrap" style="margin-bottom:6px;">
           <div class="progress-bar" style="width:${pct}%"></div>
         </div>
@@ -217,28 +173,11 @@ function goToCourse(id) {
   window.location.href = `course.html?id=${id}`;
 }
 
-// User button top right
-function renderUserBtn() {
-  const el = document.getElementById('user-btn');
-  if (Auth.isLoggedIn()) {
-    el.innerHTML = `<button class="btn btn-secondary" style="padding:6px 12px; font-size:13px;"
-      onclick="Auth.signOut()">${t('sign_out')}</button>`;
-  } else {
-    el.innerHTML = `<button class="btn btn-primary" style="padding:6px 14px; font-size:13px;"
-      onclick="Auth.signInGoogle()">Sign in</button>`;
-  }
-}
-
-// Init
 (async () => {
   Lang.init();
-  await Auth.init();
-  renderUserBtn();
   applyLang();
   await loadCourses();
-
   document.addEventListener('langchange', applyLang);
-  document.addEventListener('authchange', () => { renderUserBtn(); loadCourses(); });
 })();
 
 </script>
