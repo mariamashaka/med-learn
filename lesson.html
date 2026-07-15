@@ -31,7 +31,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
 <script src="js/lang.js"></script>
-<script src="js/auth.js"></script>
 <script>
 
 const I18N = {
@@ -92,6 +91,15 @@ let quizSubmitted = false;
 let selectedAnswers = {};
 let alreadyDone = false;
 
+// localStorage progress
+function getLocalProgress(cId) {
+  try { return JSON.parse(localStorage.getItem('progress_' + cId) || '{}'); }
+  catch { return {}; }
+}
+function saveLocalProgress(cId, scores) {
+  localStorage.setItem('progress_' + cId, JSON.stringify(scores));
+}
+
 async function load() {
   if (!courseId || !lessonId) { location.href = 'index.html'; return; }
 
@@ -107,15 +115,8 @@ async function load() {
   document.getElementById('back-link').href = `course.html?id=${courseId}`;
   document.getElementById('course-name-header').textContent = Lang.t(course.title);
 
-  if (Auth.isLoggedIn()) {
-    const { data: p } = await sb
-      .from('user_progress')
-      .select('lesson_scores')
-      .eq('user_id', Auth.user.id)
-      .eq('course_id', courseId)
-      .single();
-    alreadyDone = !!(p?.lesson_scores?.[lessonId]);
-  }
+  const scores = getLocalProgress(courseId);
+  alreadyDone = !!(scores[lessonId]);
 
   render();
 }
@@ -139,7 +140,6 @@ function render() {
   const quiz    = lesson.quiz    || [];
 
   document.getElementById('lesson-content').innerHTML = `
-
     <div style="margin-bottom:1.25rem;">
       <div style="font-size:13px; color:var(--text-muted); margin-bottom:4px;">
         ${t('lesson')} ${getLessonNum()}
@@ -172,7 +172,6 @@ function getLessonNum() {
 
 function renderVideo(videoId, otherVideoId) {
   const embedUrl = id => `https://www.youtube.com/embed/${extractYoutubeId(id)}`;
-
   return `
   <div style="margin-bottom:1.25rem;">
     <div class="video-wrap" id="video-wrap">
@@ -214,20 +213,16 @@ function switchVideoLang() {
 
 function renderContentBlock(block) {
   if (block.type === 'text') {
-    // Convert \n to <br> and • to styled bullet lines
     const raw = Lang.t(block.value);
-    const html = raw
-      .split('\n')
-      .map(line => {
-        if (line.trim().startsWith('•')) {
-          return `<div style="display:flex; gap:8px; margin:4px 0;">
-            <span style="color:var(--brown); flex-shrink:0;">•</span>
-            <span>${line.trim().substring(1).trim()}</span>
-          </div>`;
-        }
-        return line ? `<p style="line-height:1.75; margin-bottom:6px;">${line}</p>` : '';
-      })
-      .join('');
+    const html = raw.split('\n').map(line => {
+      if (line.trim().startsWith('•')) {
+        return `<div style="display:flex; gap:8px; margin:4px 0;">
+          <span style="color:var(--brown); flex-shrink:0;">•</span>
+          <span>${line.trim().substring(1).trim()}</span>
+        </div>`;
+      }
+      return line ? `<p style="line-height:1.75; margin-bottom:6px;">${line}</p>` : '';
+    }).join('');
     return `<div class="content-block">${html}</div>`;
   }
   if (block.type === 'heading') {
@@ -263,7 +258,6 @@ function renderContentBlock(block) {
     </div>`;
   }
   if (block.type === 'image') {
-    // Supports url_en / url_sw for language-specific images, falls back to shared url
     const url = block[`url_${Lang.current}`] || block.url_en || block.url_sw || block.url || '';
     if (!url) return '';
     return `<div class="content-block" style="margin:1rem 0;">
@@ -279,7 +273,6 @@ function renderQuiz(quiz) {
   if (quizSubmitted || alreadyDone) {
     return renderQuizResults(quiz, alreadyDone);
   }
-
   return `
   <div class="section-title">${t('quiz_title')}</div>
   <div id="quiz-form">
@@ -381,7 +374,7 @@ function selectOption(qi, oi) {
   });
 }
 
-async function submitQuiz() {
+function submitQuiz() {
   const quiz = lesson.quiz || [];
   if (Object.keys(selectedAnswers).length < quiz.length) {
     showToast(t('select_all'));
@@ -390,40 +383,12 @@ async function submitQuiz() {
   const maxScore = quiz.length;
   const earned = quiz.reduce((s, q, i) => s + (selectedAnswers[i] === q.correct ? 1 : 0), 0);
   quizSubmitted = true;
-  if (Auth.isLoggedIn()) await saveProgress(earned, maxScore);
-  render();
-}
 
-async function saveProgress(earned, maxScore) {
-  const { data: existing } = await sb
-    .from('user_progress')
-    .select('*')
-    .eq('user_id', Auth.user.id)
-    .eq('course_id', courseId)
-    .single();
-
-  const scores = existing?.lesson_scores || {};
+  const scores = getLocalProgress(courseId);
   scores[lessonId] = { score: earned, max: maxScore };
+  saveLocalProgress(courseId, scores);
 
-  const completedCount = Object.keys(scores).length;
-  const totalScore = Object.values(scores).reduce((s, v) => s + v.score, 0);
-  const maxTotal   = Object.values(scores).reduce((s, v) => s + v.max,   0);
-
-  const row = {
-    user_id: Auth.user.id,
-    course_id: courseId,
-    lesson_scores: scores,
-    completed_lessons: completedCount,
-    total_score: totalScore,
-    max_score: maxTotal,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (existing) {
-    await sb.from('user_progress').update(row).eq('user_id', Auth.user.id).eq('course_id', courseId);
-  } else {
-    await sb.from('user_progress').insert({ ...row, created_at: new Date().toISOString() });
-  }
+  render();
 }
 
 function retryQuiz() {
@@ -448,7 +413,6 @@ function applyLang() {
 
 (async () => {
   Lang.init();
-  await Auth.init();
   await load();
   document.addEventListener('langchange', applyLang);
 })();
