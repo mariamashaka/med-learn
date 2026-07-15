@@ -11,26 +11,12 @@
 <header class="header">
   <div class="header-inner">
     <a href="index.html" class="logo">Med<span>Learn</span></a>
-    <div style="display:flex; align-items:center; gap:12px;">
-      <div class="lang-toggle">
-        <button class="lang-btn" data-lang="en">EN</button>
-        <button class="lang-btn" data-lang="sw">SW</button>
-      </div>
+    <div class="lang-toggle">
+      <button class="lang-btn" data-lang="en">EN</button>
+      <button class="lang-btn" data-lang="sw">SW</button>
     </div>
   </div>
 </header>
-
-<!-- Auth overlay -->
-<div id="auth-overlay" class="auth-overlay" style="display:none">
-  <div class="auth-box">
-    <div style="font-size:40px; margin-bottom:0.5rem;">🎓</div>
-    <h2 id="login-title">Sign in to continue</h2>
-    <p id="login-desc">Track your progress and earn certificates.</p>
-    <button class="btn btn-primary btn-full" onclick="Auth.signInGoogle()">
-      Continue with Google
-    </button>
-  </div>
-</div>
 
 <main class="container">
   <div id="course-content">
@@ -41,7 +27,6 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="js/config.js"></script>
 <script src="js/lang.js"></script>
-<script src="js/auth.js"></script>
 <script>
 
 const I18N = {
@@ -55,8 +40,6 @@ const I18N = {
     progress: 'Progress',
     score: 'Score',
     of: 'of',
-    login_title: 'Sign in to continue',
-    login_desc: 'Track your progress and earn certificates.',
     no_lessons: 'No lessons in this course yet.',
   },
   sw: {
@@ -69,8 +52,6 @@ const I18N = {
     progress: 'Maendeleo',
     score: 'Alama',
     of: 'kati ya',
-    login_title: 'Ingia kuendelea',
-    login_desc: 'Fuatilia maendeleo yako na upate vyeti.',
     no_lessons: 'Hakuna masomo katika kozi hii bado.',
   }
 };
@@ -82,17 +63,19 @@ const courseId = params.get('id');
 
 let course = null;
 let lessons = [];
-let progress = null; // { completed_lessons, lesson_scores: {lesson_id: {score,max}} }
+
+function getLocalProgress() {
+  try { return JSON.parse(localStorage.getItem('progress_' + courseId) || '{}'); }
+  catch { return {}; }
+}
 
 async function load() {
   if (!courseId) { location.href = 'index.html'; return; }
 
-  // Load course
   const { data: c } = await sb.from('courses').select('*').eq('id', courseId).single();
   if (!c) { location.href = 'index.html'; return; }
   course = c;
 
-  // Load lessons
   const { data: l } = await sb
     .from('lessons')
     .select('id, title, order_num, duration_min')
@@ -100,57 +83,23 @@ async function load() {
     .order('order_num');
   lessons = l || [];
 
-  // Load progress if logged in
-  if (Auth.isLoggedIn()) {
-    const { data: p } = await sb
-      .from('user_progress')
-      .select('*')
-      .eq('user_id', Auth.user.id)
-      .eq('course_id', courseId)
-      .single();
-    progress = p || null;
-  }
-
   render();
 }
 
-function getCompletedCount() {
-  if (!progress?.lesson_scores) return 0;
-  return Object.keys(progress.lesson_scores).length;
-}
-
-function getTotalScore() {
-  if (!progress?.lesson_scores) return { earned: 0, max: 0 };
-  let earned = 0, max = 0;
-  Object.values(progress.lesson_scores).forEach(s => {
-    earned += s.score || 0;
-    max    += s.max   || 0;
-  });
-  return { earned, max };
-}
-
-function isLessonDone(lessonId) {
-  return !!(progress?.lesson_scores?.[lessonId]);
-}
-
-function isLessonAccessible(idx) {
-  if (!Auth.isLoggedIn()) return idx === 0; // guests can only preview first
-  if (idx === 0) return true;
-  return isLessonDone(lessons[idx - 1]?.id);
-}
-
 function render() {
-  const completedCount = getCompletedCount();
+  const scores = getLocalProgress();
+  const completedCount = Object.keys(scores).length;
   const total = lessons.length;
   const pct = total ? Math.round(completedCount / total * 100) : 0;
-  const { earned, max } = getTotalScore();
+
+  let earned = 0, max = 0;
+  Object.values(scores).forEach(s => { earned += s.score || 0; max += s.max || 0; });
 
   document.getElementById('course-content').innerHTML = `
 
     <a href="index.html" style="font-size:14px; color:var(--text-muted); text-decoration:none;
        display:inline-block; margin-bottom:1rem;">${t('back')}</a>
 
-    <!-- Course header card -->
     <div class="card" style="margin-bottom:1.25rem;">
       <span class="badge badge-brown" style="margin-bottom:10px;">${course.category || 'General'}</span>
       <h1 style="font-size:20px; font-weight:600; margin-bottom:8px;">${Lang.t(course.title)}</h1>
@@ -158,7 +107,6 @@ function render() {
         ${Lang.t(course.description)}
       </p>
 
-      <!-- Progress -->
       <div style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
         <span class="section-title" style="margin:0;">${t('progress')}</span>
         <span style="font-size:13px; color:var(--text-muted);">${completedCount}/${total} &nbsp;•&nbsp; ${pct}%</span>
@@ -167,7 +115,6 @@ function render() {
         <div class="progress-bar" style="width:${pct}%"></div>
       </div>
 
-      <!-- Score (only shown if any quiz taken) -->
       ${max > 0 ? `
       <div style="display:flex; align-items:center; justify-content:space-between;
            background:var(--bg); border-radius:var(--radius-sm); padding:10px 14px;">
@@ -182,12 +129,11 @@ function render() {
       </div>` : ''}
     </div>
 
-    <!-- Lessons list -->
     <div class="section-title">${t('lessons')}</div>
     <div class="card" style="padding:0.25rem 1.25rem;">
       ${lessons.length === 0
         ? `<p style="text-align:center; padding:1.5rem 0; color:var(--text-muted);">${t('no_lessons')}</p>`
-        : lessons.map((l, idx) => renderLessonRow(l, idx)).join('')
+        : lessons.map((l, idx) => renderLessonRow(l, idx, scores)).join('')
       }
     </div>
   `;
@@ -200,10 +146,10 @@ function getScoreBadgeClass(earned, max) {
   return 'badge-gray';
 }
 
-function renderLessonRow(lesson, idx) {
-  const done = isLessonDone(lesson.id);
-  const accessible = isLessonAccessible(idx);
-  const score = progress?.lesson_scores?.[lesson.id];
+function renderLessonRow(lesson, idx, scores) {
+  const done = !!(scores[lesson.id]);
+  const accessible = idx === 0 || !!(scores[lessons[idx - 1]?.id]);
+  const score = scores[lesson.id];
 
   const numClass = done ? 'done' : accessible ? 'current' : 'locked';
   const numContent = done ? '✓' : idx + 1;
@@ -252,9 +198,6 @@ function applyLang() { if (course) render(); }
 
 (async () => {
   Lang.init();
-  await Auth.init();
-  if (!Auth.isLoggedIn()) showAuthOverlay();
-  applyLang();
   await load();
   document.addEventListener('langchange', applyLang);
 })();
