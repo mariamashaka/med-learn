@@ -118,6 +118,15 @@ async function load() {
   const scores = getLocalProgress(courseId);
   alreadyDone = !!(scores[lessonId]);
 
+  // Auto-mark as done if no quiz
+  if (!lesson.quiz || lesson.quiz.length === 0) {
+    if (!scores[lessonId]) {
+      scores[lessonId] = { score: 0, max: 0 };
+      saveLocalProgress(courseId, scores);
+    }
+    alreadyDone = true;
+  }
+
   render();
 }
 
@@ -157,7 +166,7 @@ function render() {
       <hr class="divider">
     ` : ''}
 
-    ${quiz.length ? renderQuiz(quiz) : ''}
+    ${quiz.length ? renderQuiz(quiz) : renderNextBtn()}
 
     <div style="margin-top:1.5rem; display:flex; gap:10px; flex-wrap:wrap;">
       <a href="course.html?id=${courseId}" class="btn btn-secondary">${t('back_course')}</a>
@@ -267,6 +276,16 @@ function renderContentBlock(block) {
     </div>`;
   }
   return '';
+}
+
+function renderNextBtn() {
+  const next = getNextLesson();
+  if (!next) return '';
+  return `<div style="margin-bottom:1rem;">
+    <a href="lesson.html?course=${courseId}&lesson=${next.id}" class="btn btn-green">
+      ${t('quiz_next')}
+    </a>
+  </div>`;
 }
 
 function renderQuiz(quiz) {
